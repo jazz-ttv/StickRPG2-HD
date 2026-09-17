@@ -12,9 +12,11 @@ timeout /t 5 >nul
 cls
 :start
 echo Looking for Stick RPG 2 instances...
-wmic process where "name='Stick RPG 2 Director\'s Cut.exe'" get ExecutablePath > srpg2hd_temp_path
-for /f "skip=1delims=" %%a in (
- 'type srpg2hd_temp_path'
+set "exepath="
+rem WMIC was removed from current Windows installations. Use CIM through PowerShell instead.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^Stick RPG 2 Director.* Cut\.exe$' } | Select-Object -First 1 -ExpandProperty ExecutablePath; if ($p) { $p }" > srpg2hd_temp_path
+for /f "usebackq delims=" %%a in (
+    `type srpg2hd_temp_path`
 ) do set "exepath=%%a"&goto next
 :next
 del srpg2hd_temp_path
