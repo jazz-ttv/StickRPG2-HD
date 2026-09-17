@@ -12,6 +12,8 @@ import com.jpexs.decompiler.flash.ReadOnlyTagList;
 import com.jpexs.decompiler.flash.tags.base.ShapeTag;
 import com.jpexs.decompiler.flash.types.FILLSTYLE;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,6 +24,10 @@ import java.util.List;
 
 
 public class Main {
+
+    // Conservative performance guard: skip oversized HD textures that would make
+    // the Flash renderer do more work than necessary while walking behind buildings.
+    private static final int MAX_IMPORT_DIMENSION = 1024;
 
     public static void main(String[] args) {
         String swfsInPath = "../swfs/";
@@ -51,6 +57,36 @@ public class Main {
         }
     }
 
+    private static void importImages(SWF swf, String in, String out) throws IOException {
+        for (Tag t : swf.getTags().toArrayList()) {
+            if (t instanceof ShapeTag) {
+                int bitmapId = getBitmapId((ShapeTag) t);
+                if (bitmapId > 0) {
+                    Path path = resolveReplacementPath(in, bitmapId);
+                    if (path == null) {
+                        continue;
+                    }
+
+                    if (!isSafeTextureSize(path)) {
+                        System.out.println("Skipping oversized HD texture for bitmap " + bitmapId + ": " + path + "; exceeds " + MAX_IMPORT_DIMENSION + "px");
+                        continue;
+                    }
+
+                    System.out.println("Importing: " + bitmapId);
+                    byte[] image = Files.readAllBytes(path);
+                    new ShapeImporter().importImage((ShapeTag) t, image);
+                }
+            }
+        }
+
+        OutputStream os = new FileOutputStream(out);
+        try {
+            swf.saveTo(os);
+        } catch (IOException e) {
+            System.out.println("ERROR: Error during SWF saving");
+        }
+    }
+
     private static void exportAllImages(String swfsPath, String imgOutPath) {
         for (File file : Objects.requireNonNull(new File(swfsPath).listFiles())) {
             System.out.println(file.getName());
@@ -70,30 +106,30 @@ public class Main {
         }
     }
 
-    private static void importImages(SWF swf, String in, String out) throws IOException {
-        for (Tag t : swf.getTags().toArrayList()) {
-            if (t instanceof ShapeTag) {
-                int bitmapId = getBitmapId((ShapeTag) t);
-                if (bitmapId > 0) {
-                    Path path = Paths.get(in + "/new/" + bitmapId + ".png");
-                    if (!Files.exists(path)) {
-                        path = Paths.get(in + "/upsies/" + bitmapId + ".png");
-                        if (!Files.exists(path)) {
-                            continue;
-                        }
-                    }
-                    System.out.println("Importing: " + bitmapId);
-                    byte[] image = Files.readAllBytes(path);
-                    new ShapeImporter().importImage((ShapeTag) t, image);
-                }
-            }
+    private static Path resolveReplacementPath(String in, int bitmapId) {
+        Path path = Paths.get(in + "/new/" + bitmapId + ".png");
+        if (Files.exists(path)) {
+            return path;
         }
 
-        OutputStream os = new FileOutputStream(out);
-        try {
-            swf.saveTo(os);
+        path = Paths.get(in + "/upsies/" + bitmapId + ".png");
+        if (Files.exists(path)) {
+            return path;
+        }
+
+        return null;
+    }
+
+    private static boolean isSafeTextureSize(Path path) {
+        try (InputStream is = Files.newInputStream(path)) {
+            BufferedImage image = ImageIO.read(is);
+            if (image == null) {
+                return false;
+            }
+            int maxDimension = Math.max(image.getWidth(), image.getHeight());
+            return maxDimension <= MAX_IMPORT_DIMENSION;
         } catch (IOException e) {
-            System.out.println("ERROR: Error during SWF saving");
+            return false;
         }
     }
 
